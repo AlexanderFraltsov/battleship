@@ -4,7 +4,6 @@ export type TUser = {
 	id: number;
 	name: string;
 	password: string;
-	roomId: number;
 };
 
 export type TClient = {
@@ -55,6 +54,10 @@ export type TServerMessage = {
 	type: EOutcomingMessageType;
 }
 
+const generateId = (): number =>
+	+(Date.now().toString().slice(-6));
+
+
 export class SocketServer {
 	private server: WebSocketServer;
 
@@ -62,9 +65,9 @@ export class SocketServer {
 
 	private rooms: TRoom[] = [];
 
-	private winners: TWinner[] = [];
+	private games: any[] = [];
 
-	private nextIndex = 1;
+	private winners: TWinner[] = [];
 
 	constructor(port: number) {
 		this.init(port);
@@ -84,9 +87,8 @@ export class SocketServer {
 	}
 
 	private handleConnect = (socket: WebSocket) => {
-		const client: TClient = { id: this.nextIndex, socket, user: null };
+		const client: TClient = { id: generateId(), socket, user: null };
 		this.clients.push(client);
-		this.nextIndex = this.nextIndex + 1;
 
 		socket.on('close', (code, reason) => {
 			console.log(`Client ID = ${client.id} | Closed with code ${code}, reason ${reason}`);
@@ -115,7 +117,7 @@ export class SocketServer {
 				return this.addShips(data);
 			}
 			case EIncomingMessageType.ADD_USER_TO_ROOM: {
-				return this.addUserToRoom(data);
+				return this.addUserToRoom(data, clientId);
 			}
 			case EIncomingMessageType.ATTACK: {
 				return this.attack(data);
@@ -157,7 +159,6 @@ export class SocketServer {
 			id: clientId,
 			name,
 			password,
-			roomId: null,
 		};
 
 		client.user = newUser;
@@ -176,8 +177,12 @@ export class SocketServer {
 	}
 
 	private createRoom = (clientId: number): void => {
+		if (this.rooms.some(room => room.roomUsers.some(user => user.id === clientId))) {
+			return;
+		}
+
 		const { user } = this.clients.find(({ id }) => id === clientId);
-		const roomId = this.rooms.length + 1;
+		const roomId = generateId();
 		const room = {
 			roomId,
 			roomUsers: [
@@ -187,7 +192,6 @@ export class SocketServer {
 				},
 			],
 		};
-		user.roomId = roomId;
 		this.rooms.push(room);
 		this.sendUpdateRoom();
 		this.sendUpdateWinners();
@@ -196,14 +200,43 @@ export class SocketServer {
 	private attack = (data: any): void => {
 		console.log('attack!');
 	}
+
 	private addShips = (data: any): void => {
 		console.log('addShips!');
 	}
-	private addUserToRoom = ({ indexRoom }: any): void => {
-		console.log('addUserToRoom!');
+
+	private addUserToRoom = ({ indexRoom }: { indexRoom: number }, clientId: number): void => {
+		const [enemy] = this.rooms.find(room => room.roomId === indexRoom).roomUsers;
+		if (enemy.id === clientId) {
+			return;
+		}
+		this.rooms = this.rooms.filter(room => room.roomId !== indexRoom);
+		this.sendUpdateRoom();
+		this.sendCreateGame(clientId, enemy.id);
 	}
 	private randomAttack = (data: any): void => {
 		console.log('randomAttack!');
+	}
+
+	private sendCreateGame(userId: number, enemyId: number) {
+		const gameClients = this.clients.filter(client => client.user !== null).filter(({ user: { id } }) => id === userId || id === enemyId );
+		const game = {
+			gameId: generateId(),
+			gameUsers: [
+				userId, enemyId,
+			],
+		};
+		this.games.push(game);
+		for (const client of gameClients) {
+			this.sendMessage(client, {
+				id: 0,
+				type: EOutcomingMessageType.CREATE_GAME,
+				data: {
+					idGame: game.gameId,
+					idPlayer: userId,
+				},
+			});
+		}
 	}
 
 	private sendUpdateRoom() {
