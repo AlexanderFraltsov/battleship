@@ -1,3 +1,4 @@
+import { type } from 'node:os';
 import { WebSocketServer, RawData, WebSocket } from 'ws';
 
 export type TUser = {
@@ -20,6 +21,21 @@ export type TRoom = {
 export type TWinner = {
 	name: string;
 	wins: number;
+}
+
+export type TShipPosition = {
+	position: { x: number; y: number };
+	direction: boolean;
+	type: 'small' | 'medium' | 'large' | 'huge';
+	length: number;
+}
+
+export type TGame = {
+	gameId: number;
+	gameUsers: {
+		id: number;
+		ships: TShipPosition[];
+	}[];
 }
 
 export enum EIncomingMessageType {
@@ -65,7 +81,7 @@ export class SocketServer {
 
 	private rooms: TRoom[] = [];
 
-	private games: any[] = [];
+	private games: TGame[] = [];
 
 	private winners: TWinner[] = [];
 
@@ -80,7 +96,8 @@ export class SocketServer {
 
 		this.server.on('error', (error) => {
 			console.error(`Server error: ${error}`);
-		})
+		});
+
 		process.on('exit', () => {
 			this.server.close();
 		});
@@ -91,11 +108,9 @@ export class SocketServer {
 		this.clients.push(client);
 
 		socket.on('close', (code, reason) => {
-			console.log(`Client ID = ${client.id} | Closed with code ${code}, reason ${reason}`);
+			console.log(`Client ID = ${client.id} | Closed with code ${code}, reason: ${reason.toString() ?? 'Reload Page'}`);
+			this.clients = this.clients.filter(({ id }) => id !== client.id)
 		});
-		socket.on('open', () => {
-			console.log(`Client ID = ${client.id} | Open`);
-		})
 		socket.on('error', (error) => this.handleError(client, error));
 		socket.on('message', (message) => this.handleMessage(client, message));
 	}
@@ -104,7 +119,10 @@ export class SocketServer {
 		try {
 			const response: TClientMessage = JSON.parse(message.toString());
 			const data = response.data.length > 0 ? JSON.parse(response.data) : response.data;
-			console.log(`Client ID = ${client.id} | Incoming Message | Type: ${response.type} | Data: `, data);
+			console.log(
+				`Client ID = ${client.id} | Incoming Message | Type: ${response.type} | Data: `,
+				JSON.stringify(data, null, 4),
+			);
 			this.action(response.type, data, client.id);
 		} catch (error) {
 			this.handleError(client, error);
@@ -114,7 +132,7 @@ export class SocketServer {
 	private action = (type: EIncomingMessageType, data: any, clientId: number): void => {
 		switch (type) {
 			case EIncomingMessageType.ADD_SHIPS: {
-				return this.addShips(data);
+				return this.addShips(data, clientId);
 			}
 			case EIncomingMessageType.ADD_USER_TO_ROOM: {
 				return this.addUserToRoom(data, clientId);
@@ -201,8 +219,24 @@ export class SocketServer {
 		console.log('attack!');
 	}
 
-	private addShips = (data: any): void => {
-		console.log('addShips!');
+	private addShips = (data: { gameId: number; indexPlayer: number; ships: TShipPosition[] }, clientId: number): void => {
+		const { ships, indexPlayer } = data;
+
+		this.games = this.games.map(game => game.gameId !== data.gameId ? game : {
+			...game,
+			gameUsers: game.gameUsers.map((user) => user.id !== clientId ? user: {
+				...user, ships
+			}),
+		});
+
+		const { gameUsers } = this.games.find(({ gameId }) => gameId === data.gameId);
+		const isAllShippsSettled = gameUsers.every(({ ships }) => ships && ships.length > 0);
+
+		if (isAllShippsSettled) {
+			const clientIds = gameUsers.map(({ id }) => id);
+			this.sendStartGame(clientIds, indexPlayer, ships);
+			this.sendTurn(clientIds, indexPlayer);
+		}
 	}
 
 	private addUserToRoom = ({ indexRoom }: { indexRoom: number }, clientId: number): void => {
@@ -220,10 +254,11 @@ export class SocketServer {
 
 	private sendCreateGame(userId: number, enemyId: number) {
 		const gameClients = this.clients.filter(client => client.user !== null).filter(({ user: { id } }) => id === userId || id === enemyId );
-		const game = {
+		const game: TGame = {
 			gameId: generateId(),
 			gameUsers: [
-				userId, enemyId,
+				{ id: userId, ships: null },
+				{ id: enemyId, ships: null },
 			],
 		};
 		this.games.push(game);
@@ -257,15 +292,47 @@ export class SocketServer {
 				id: 0,
 				type: EOutcomingMessageType.UPDATE_WINNERS,
 				data: this.winners,
-			})
+			});
+		}
+	}
+
+	private sendStartGame(clientIds: number[], currentPlayerIndex: number, ships: TShipPosition[]) {
+		const clients = this.clients.filter(({ id }) => clientIds.includes(id));
+		for (const client of clients) {
+			this.sendMessage(client, {
+				id: 0,
+				type: EOutcomingMessageType.START_GAME,
+				data: {
+					currentPlayerIndex,
+					ships,
+				},
+			});
+		}
+	}
+
+	private sendTurn(clientIds: number[], currentPlayer: number) {
+		const clients = this.clients.filter(({ id }) => clientIds.includes(id));
+		for (const client of clients) {
+			this.sendMessage(client, {
+				id: 0,
+				type: EOutcomingMessageType.TURN,
+				data: {
+					currentPlayer,
+				}
+			});
 		}
 	}
 
 	private sendMessage(client: TClient, message: TServerMessage): void {
 		try {
-  		console.log(`Client ID = ${client.id} | Outcoming Message | Type: ${message.type} | Data: `, message.data);
-			const responseMessage = this.prepareResponse(message);
-  		client.socket.send(responseMessage);
+			if (client.socket.readyState === WebSocket.OPEN) {
+				console.log(
+					`Client ID = ${client.id} | Outcoming Message | Type: ${message.type} | Data: `,
+					JSON.stringify(message.data, null, 4),
+				);
+				const responseMessage = this.prepareResponse(message);
+				client.socket.send(responseMessage);
+			}
 		} catch (error) {
 			this.handleError(client, error);
 		}
