@@ -1,61 +1,24 @@
-import { type } from 'node:os';
 import { WebSocketServer, RawData, WebSocket } from 'ws';
 
-export type TUser = {
-	id: number;
-	name: string;
-	password: string;
-};
-
-export type TClient = {
-	id: number;
-	user: TUser;
-	socket: WebSocket;
-};
-
-export type TRoom = {
-	roomId: number;
-	roomUsers: Omit<TUser, 'password' | 'roomId'>[]
-}
-
-export type TWinner = {
-	name: string;
-	wins: number;
-}
-
-export type TShipPosition = {
-	position: { x: number; y: number };
-	direction: boolean;
-	type: 'small' | 'medium' | 'large' | 'huge';
-	length: number;
-}
+import {
+	EIncomingMessageType,
+	EOutcomingMessageType,
+	TClient,
+	TRoom,
+	TShipPosition,
+	TUser,
+	TWinner,
+} from '../models';
+import { createGameField, generateId } from '../utils';
 
 export type TGame = {
 	gameId: number;
 	gameUsers: {
 		id: number;
 		ships: TShipPosition[];
+		attackResults: boolean[][];
 	}[];
-}
-
-export enum EIncomingMessageType {
-	ADD_SHIPS = 'add_ships',
-	ADD_USER_TO_ROOM = 'add_user_to_room',
-	ATTACK = 'attack',
-	CREATE_ROOM = 'create_room',
-	RANDOM_ATTACK = 'randomAttack',
-	REGISTRATION = 'reg',
-}
-
-export enum EOutcomingMessageType {
-	ATTACK = 'attack',
-	CREATE_GAME = 'create_game',
-	FINISH = 'finish',
-	REGISTRATION = 'reg',
-	START_GAME = 'start_game',
-	TURN = 'turn',
-	UPDATE_ROOM = 'update_room',
-	UPDATE_WINNERS = 'update_winners',
+	currentPlayerIndex: number;
 }
 
 export type TClientMessage = {
@@ -69,10 +32,6 @@ export type TServerMessage = {
 	data: any;
 	type: EOutcomingMessageType;
 }
-
-const generateId = (): number =>
-	+(Date.now().toString().slice(-6));
-
 
 export class SocketServer {
 	private server: WebSocketServer;
@@ -132,7 +91,7 @@ export class SocketServer {
 	private action = (type: EIncomingMessageType, data: any, clientId: number): void => {
 		switch (type) {
 			case EIncomingMessageType.ADD_SHIPS: {
-				return this.addShips(data, clientId);
+				return this.addShips(data);
 			}
 			case EIncomingMessageType.ADD_USER_TO_ROOM: {
 				return this.addUserToRoom(data, clientId);
@@ -215,18 +174,37 @@ export class SocketServer {
 		this.sendUpdateWinners();
 	}
 
-	private attack = (data: any): void => {
-		console.log('attack!');
+	private attack = ({ gameId, x, y, indexPlayer }: {
+		gameId: number;
+		x: number;
+		y: number;
+		indexPlayer: number;
+	}): void => {
+		const game = this.games.find(game => game.gameId === gameId);
+		if (game && game.currentPlayerIndex === indexPlayer) {
+			console.log('attack!', { gameId, x, y, indexPlayer});
+		}
 	}
 
-	private addShips = (data: { gameId: number; indexPlayer: number; ships: TShipPosition[] }, clientId: number): void => {
+	private randomAttack = ({ gameId, indexPlayer }: {
+		gameId: number;
+		indexPlayer: number;
+	}): void => {
+		const game = this.games.find(game => game.gameId === gameId);
+		if (game && game.currentPlayerIndex === indexPlayer) {
+			console.log('random attack!', { gameId, indexPlayer});
+		}
+	}
+
+	private addShips = (data: { gameId: number; indexPlayer: number; ships: TShipPosition[] }): void => {
 		const { ships, indexPlayer } = data;
 
 		this.games = this.games.map(game => game.gameId !== data.gameId ? game : {
 			...game,
-			gameUsers: game.gameUsers.map((user) => user.id !== clientId ? user: {
+			gameUsers: game.gameUsers.map((user) => user.id !== indexPlayer ? user: {
 				...user, ships
 			}),
+			currentPlayerIndex: indexPlayer,
 		});
 
 		const { gameUsers } = this.games.find(({ gameId }) => gameId === data.gameId);
@@ -248,18 +226,16 @@ export class SocketServer {
 		this.sendUpdateRoom();
 		this.sendCreateGame(clientId, enemy.id);
 	}
-	private randomAttack = (data: any): void => {
-		console.log('randomAttack!');
-	}
 
 	private sendCreateGame(userId: number, enemyId: number) {
 		const gameClients = this.clients.filter(client => client.user !== null).filter(({ user: { id } }) => id === userId || id === enemyId );
 		const game: TGame = {
 			gameId: generateId(),
 			gameUsers: [
-				{ id: userId, ships: null },
-				{ id: enemyId, ships: null },
+				{ id: userId, ships: null, attackResults: createGameField() },
+				{ id: enemyId, ships: null, attackResults: createGameField() },
 			],
+			currentPlayerIndex: null,
 		};
 		this.games.push(game);
 		for (const client of gameClients) {
@@ -268,7 +244,7 @@ export class SocketServer {
 				type: EOutcomingMessageType.CREATE_GAME,
 				data: {
 					idGame: game.gameId,
-					idPlayer: userId,
+					idPlayer: client.id,
 				},
 			});
 		}
