@@ -81,10 +81,10 @@ export class SocketServer {
 		try {
 			const response: TClientMessage = JSON.parse(message.toString());
 			const data = response.data.length > 0 ? JSON.parse(response.data) : response.data;
-			// console.log(
-			// 	`Client ID = ${client.id} | Incoming Message | Type: ${response.type} | Data: `,
-			// 	JSON.stringify(data, null, 4),
-			// );
+			console.log(
+				`Client ID = ${client.id} | Incoming Message | Type: ${response.type} | Data: `,
+				JSON.stringify(data, null, 4),
+			);
 			this.action(response.type, data, client.id);
 		} catch (error) {
 			this.handleError(client, error);
@@ -380,10 +380,10 @@ export class SocketServer {
 	private sendMessage(client: TClient, message: TServerMessage): void {
 		try {
 			if (client.socket.readyState === WebSocket.OPEN) {
-				// console.log(
-				// 	`Client ID = ${client.id} | Outcoming Message | Type: ${message.type} | Data: `,
-				// 	JSON.stringify(message.data, null, 4),
-				// );
+				console.log(
+					`Client ID = ${client.id} | Outcoming Message | Type: ${message.type} | Data: `,
+					JSON.stringify(message.data, null, 4),
+				);
 				const responseMessage = this.prepareResponse(message);
 				client.socket.send(responseMessage);
 			}
