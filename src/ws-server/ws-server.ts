@@ -1,15 +1,17 @@
 import { WebSocketServer, RawData, WebSocket } from 'ws';
 
 import {
+	EAttackResultStatus,
 	EIncomingMessageType,
 	EOutcomingMessageType,
+	TAttackResult,
 	TClient,
 	TRoom,
 	TShipPosition,
 	TUser,
 	TWinner,
 } from '../models';
-import { createGameField, generateId } from '../utils';
+import { createGameField, generateId, ShipUtils } from '../utils';
 
 export type TGame = {
 	gameId: number;
@@ -78,10 +80,10 @@ export class SocketServer {
 		try {
 			const response: TClientMessage = JSON.parse(message.toString());
 			const data = response.data.length > 0 ? JSON.parse(response.data) : response.data;
-			console.log(
-				`Client ID = ${client.id} | Incoming Message | Type: ${response.type} | Data: `,
-				JSON.stringify(data, null, 4),
-			);
+			// console.log(
+			// 	`Client ID = ${client.id} | Incoming Message | Type: ${response.type} | Data: `,
+			// 	JSON.stringify(data, null, 4),
+			// );
 			this.action(response.type, data, client.id);
 		} catch (error) {
 			this.handleError(client, error);
@@ -182,7 +184,26 @@ export class SocketServer {
 	}): void => {
 		const game = this.games.find(game => game.gameId === gameId);
 		if (game && game.currentPlayerIndex === indexPlayer) {
-			console.log('attack!', { gameId, x, y, indexPlayer});
+			const attackedUser = game.gameUsers.find(({ id }) => id !== indexPlayer);
+			if (!attackedUser.attackResults[x][y]) {
+				const feedback = ShipUtils.getAttackFeedback(x, y, attackedUser.ships, attackedUser.attackResults);
+				feedback.forEach(({ position }) => {
+					attackedUser.attackResults = attackedUser.attackResults
+						.map((row, rowIndex) => row.map(
+							(cell, cellIndex) => rowIndex === position.x && cellIndex === position.y ? true : cell
+						));
+				});
+
+				if (feedback.length > 0) {
+					const clientIds = game.gameUsers.map(({ id }) => id);
+					this.sendAttackFeedback(clientIds, indexPlayer, feedback);
+					if (!feedback.some(({ status }) => [EAttackResultStatus.SHOT, EAttackResultStatus.KILLED].includes(status))) {
+						this.sendTurn(gameId, clientIds, clientIds.find((id) => id !== indexPlayer));
+					} else {
+						this.sendTurn(gameId, clientIds, indexPlayer);
+					}
+				}
+			}
 		}
 	}
 
@@ -192,7 +213,9 @@ export class SocketServer {
 	}): void => {
 		const game = this.games.find(game => game.gameId === gameId);
 		if (game && game.currentPlayerIndex === indexPlayer) {
-			console.log('random attack!', { gameId, indexPlayer});
+			const attackedUser = game.gameUsers.find(({ id }) => id !== indexPlayer);
+			const { x, y } = ShipUtils.getRandomField(attackedUser.attackResults);
+			this.attack({ x, y, gameId, indexPlayer })
 		}
 	}
 
@@ -212,8 +235,8 @@ export class SocketServer {
 
 		if (isAllShippsSettled) {
 			const clientIds = gameUsers.map(({ id }) => id);
-			this.sendStartGame(clientIds, indexPlayer, ships);
-			this.sendTurn(clientIds, indexPlayer);
+			this.sendStartGame(data.gameId);
+			this.sendTurn(data.gameId, clientIds, indexPlayer);
 		}
 	}
 
@@ -224,13 +247,29 @@ export class SocketServer {
 		}
 		this.rooms = this.rooms.filter(room => room.roomId !== indexRoom);
 		this.sendUpdateRoom();
-		this.sendCreateGame(clientId, enemy.id);
+		this.sendCreateGame(clientId, enemy.id, indexRoom);
 	}
 
-	private sendCreateGame(userId: number, enemyId: number) {
+	private sendAttackFeedback(clientIds: number[], currentPlayer: number, feedback: TAttackResult[]) {
+		const clients = this.clients.filter(({ id }) => clientIds.includes(id));
+		for (const client of clients) {
+			for (const result of feedback) {
+				this.sendMessage(client, {
+					id: 0,
+					type: EOutcomingMessageType.ATTACK,
+					data: {
+						currentPlayer,
+						...result,
+					}
+				});
+			}
+		}
+	}
+
+	private sendCreateGame(userId: number, enemyId: number, roomId: number) {
 		const gameClients = this.clients.filter(client => client.user !== null).filter(({ user: { id } }) => id === userId || id === enemyId );
 		const game: TGame = {
-			gameId: generateId(),
+			gameId: roomId,
 			gameUsers: [
 				{ id: userId, ships: null, attackResults: createGameField() },
 				{ id: enemyId, ships: null, attackResults: createGameField() },
@@ -272,22 +311,28 @@ export class SocketServer {
 		}
 	}
 
-	private sendStartGame(clientIds: number[], currentPlayerIndex: number, ships: TShipPosition[]) {
+	private sendStartGame(gameId: number) {
+		const game = this.games.find(game => game.gameId === gameId);
+		const clientIds = game.gameUsers.map(({ id }) => id);
 		const clients = this.clients.filter(({ id }) => clientIds.includes(id));
 		for (const client of clients) {
 			this.sendMessage(client, {
 				id: 0,
 				type: EOutcomingMessageType.START_GAME,
 				data: {
-					currentPlayerIndex,
-					ships,
+					currentPlayerIndex: client.id,
+					ships: game.gameUsers.find(({ id }) => id === client.id).ships,
 				},
 			});
 		}
 	}
 
-	private sendTurn(clientIds: number[], currentPlayer: number) {
+	private sendTurn(gameId: number, clientIds: number[], currentPlayer: number) {
 		const clients = this.clients.filter(({ id }) => clientIds.includes(id));
+		this.games = this.games.map(game => game.gameId !== gameId ? game : {
+			...game,
+			currentPlayerIndex: currentPlayer,
+		})
 		for (const client of clients) {
 			this.sendMessage(client, {
 				id: 0,
@@ -302,10 +347,10 @@ export class SocketServer {
 	private sendMessage(client: TClient, message: TServerMessage): void {
 		try {
 			if (client.socket.readyState === WebSocket.OPEN) {
-				console.log(
-					`Client ID = ${client.id} | Outcoming Message | Type: ${message.type} | Data: `,
-					JSON.stringify(message.data, null, 4),
-				);
+				// console.log(
+				// 	`Client ID = ${client.id} | Outcoming Message | Type: ${message.type} | Data: `,
+				// 	JSON.stringify(message.data, null, 4),
+				// );
 				const responseMessage = this.prepareResponse(message);
 				client.socket.send(responseMessage);
 			}
