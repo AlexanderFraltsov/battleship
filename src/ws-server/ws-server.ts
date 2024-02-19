@@ -17,6 +17,7 @@ export type TGame = {
 	gameId: number;
 	gameUsers: {
 		id: number;
+		shipsKilled: number;
 		ships: TShipPosition[];
 		attackResults: boolean[][];
 	}[];
@@ -197,10 +198,29 @@ export class SocketServer {
 				if (feedback.length > 0) {
 					const clientIds = game.gameUsers.map(({ id }) => id);
 					this.sendAttackFeedback(clientIds, indexPlayer, feedback);
-					if (!feedback.some(({ status }) => [EAttackResultStatus.SHOT, EAttackResultStatus.KILLED].includes(status))) {
-						this.sendTurn(gameId, clientIds, clientIds.find((id) => id !== indexPlayer));
+					if (feedback.some(({ status }) => status === EAttackResultStatus.KILLED)) {
+						game.gameUsers = game.gameUsers.map(user => user.id !== indexPlayer ? user : {
+							...user,
+							shipsKilled: user.shipsKilled + 1,
+						});
+					}
+
+					if (game.gameUsers.some(({ shipsKilled }) => shipsKilled >= 10)) {
+						const winnerId = game.gameUsers.find(({ shipsKilled }) => shipsKilled >= 10).id;
+						const { name } = this.clients.find(({ id }) => id === winnerId).user;
+						if (this.winners.some((winner) => winner.name === name)) {
+							this.winners = this.winners.map(winner => winner.name !== name ? winner : { ...winner, wins: winner.wins + 1 });
+						} else {
+							this.winners.push({ name, wins: 1 });
+						}
+						this.sendFinish(winnerId);
+						this.sendUpdateWinners();
 					} else {
-						this.sendTurn(gameId, clientIds, indexPlayer);
+						if (!feedback.some(({ status }) => [EAttackResultStatus.SHOT, EAttackResultStatus.KILLED].includes(status))) {
+							this.sendTurn(gameId, clientIds, clientIds.find((id) => id !== indexPlayer));
+						} else {
+							this.sendTurn(gameId, clientIds, indexPlayer);
+						}
 					}
 				}
 			}
@@ -271,8 +291,8 @@ export class SocketServer {
 		const game: TGame = {
 			gameId: roomId,
 			gameUsers: [
-				{ id: userId, ships: null, attackResults: createGameField() },
-				{ id: enemyId, ships: null, attackResults: createGameField() },
+				{ id: userId, ships: null, shipsKilled: 0, attackResults: createGameField() },
+				{ id: enemyId, ships: null, shipsKilled: 0, attackResults: createGameField() },
 			],
 			currentPlayerIndex: null,
 		};
@@ -339,6 +359,19 @@ export class SocketServer {
 				type: EOutcomingMessageType.TURN,
 				data: {
 					currentPlayer,
+				}
+			});
+		}
+	}
+
+	private sendFinish(winPlayer: number): void {
+		const registeredClients = this.clients.filter(client => client.user !== null);
+		for (const client of registeredClients) {
+			this.sendMessage(client, {
+				id: 0,
+				type: EOutcomingMessageType.FINISH,
+				data: {
+					winPlayer,
 				}
 			});
 		}
