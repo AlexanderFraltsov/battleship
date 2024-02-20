@@ -6,35 +6,17 @@ import {
 	EOutcomingMessageType,
 	TAttackResult,
 	TClient,
+	TClientMessage,
+	TGame,
 	TRoom,
+	TServerMessage,
 	TShipPosition,
 	TUser,
 	TWinner,
 } from '../models';
+import { BOT_NAME } from '../constants';
+import { SeaBattleBot } from '../bot/sea-battle-bot';
 import { createGameField, generateId, ShipUtils } from '../utils';
-
-export type TGame = {
-	gameId: number;
-	gameUsers: {
-		id: number;
-		shipsKilled: number;
-		ships: TShipPosition[];
-		attackResults: boolean[][];
-	}[];
-	currentPlayerIndex: number;
-}
-
-export type TClientMessage = {
-	id: 0;
-	data: string;
-	type: EIncomingMessageType;
-}
-
-export type TServerMessage = {
-	id: 0;
-	data: any;
-	type: EOutcomingMessageType;
-}
 
 export class SocketServer {
 	private server: WebSocketServer;
@@ -110,6 +92,9 @@ export class SocketServer {
 			}
 			case EIncomingMessageType.REGISTRATION: {
 				return this.registration(data, clientId);
+			}
+			case EIncomingMessageType.SINGLE_PLAY: {
+				return this.singlePlay(clientId);
 			}
 		}
 	}
@@ -208,11 +193,14 @@ export class SocketServer {
 					if (game.gameUsers.some(({ shipsKilled }) => shipsKilled >= 10)) {
 						const winnerId = game.gameUsers.find(({ shipsKilled }) => shipsKilled >= 10).id;
 						const { name } = this.clients.find(({ id }) => id === winnerId).user;
-						if (this.winners.some((winner) => winner.name === name)) {
-							this.winners = this.winners.map(winner => winner.name !== name ? winner : { ...winner, wins: winner.wins + 1 });
-						} else {
-							this.winners.push({ name, wins: 1 });
+						if (name !== BOT_NAME) {
+							if (this.winners.some((winner) => winner.name === name)) {
+								this.winners = this.winners.map(winner => winner.name !== name ? winner : { ...winner, wins: winner.wins + 1 });
+							} else {
+								this.winners.push({ name, wins: 1 });
+							}
 						}
+						this.games = this.games.filter((game) => game.gameId !== gameId);
 						this.sendFinish(winnerId);
 						this.sendUpdateWinners();
 					} else {
@@ -270,6 +258,37 @@ export class SocketServer {
 		this.sendCreateGame(clientId, enemy.id, indexRoom);
 	}
 
+	private singlePlay = (clientId: number) => {
+		const id = generateId();
+		const bot = new SeaBattleBot(id);
+		const user: TUser = {
+			id,
+			name: bot.name,
+			password: bot.password,
+		}
+		this.clients.push({
+			id,
+			socket: bot,
+			user,
+		});
+
+		bot.events.subscribe((message) => {
+			console.log(message.type)
+			if (message.type === EIncomingMessageType.BOT_CLOSE) {
+				bot.events.destroy();
+				this.clients = this.clients.filter((client) => client.id !== id);
+				return;
+			}
+			const data = message.data.length > 0 ? JSON.parse(message.data) : message.data;
+			this.action(message.type, data, id);
+		});
+
+		this.createRoom(clientId);
+
+		const { roomId } = this.rooms.find(room => room.roomUsers.some(user => user.id === clientId));
+		this.addUserToRoom({ indexRoom: roomId }, id);
+	}
+
 	private sendAttackFeedback(clientIds: number[], currentPlayer: number, feedback: TAttackResult[]) {
 		const clients = this.clients.filter(({ id }) => clientIds.includes(id));
 		for (const client of clients) {
@@ -321,6 +340,9 @@ export class SocketServer {
 	}
 
 	private sendUpdateWinners() {
+		console.log('clients: ', this.clients.map(({ id }) => id));
+		console.log('games: ', this.games);
+		console.log('rooms: ', this.rooms);
 		const registeredClients = this.clients.filter(client => client.user !== null);
 		for (const client of registeredClients) {
 			this.sendMessage(client, {

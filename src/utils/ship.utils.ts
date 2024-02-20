@@ -1,4 +1,5 @@
-import { GAME_FIELD_SIDE } from '../constants';
+import { getRandomInteger } from './get-random-integer.util';
+import { GAME_FIELD_SIDE, SHIP_TEMPLATES } from '../constants';
 import { EAttackResultStatus, TAttackResult, TShipPosition } from '../models';
 
 const getAttackFeedback = (x: number, y: number, shipPositions: TShipPosition[], field: boolean[][]): TAttackResult[] => {
@@ -87,12 +88,11 @@ const getAllFreeCells = (field: boolean[][]): { x: number, y: number }[] => {
 	return cells;
 }
 
-const randomInteger = (max: number) =>
-  Math.floor(Math.random() * (max + 1));
+
 
 const getRandomField = (field: boolean[][]): { x: number, y: number } => {
 	const cells = getAllFreeCells(field);
-	return cells[randomInteger(cells.length - 1)];
+	return cells[getRandomInteger(cells.length - 1)];
 }
 
 const isShipOnPosition = (x: number, y: number, shipPositions: TShipPosition[]) =>
@@ -101,7 +101,11 @@ const isShipOnPosition = (x: number, y: number, shipPositions: TShipPosition[]) 
 const getAttackedShip = (x: number, y: number, shipPositions: TShipPosition[]): TShipPosition =>
 	shipPositions.find((ship) => getAllPositionsForShip(ship).some(position => position.x === x && position.y === y));
 
+const getRandomShipsTemplate = () =>
+	SHIP_TEMPLATES[getRandomInteger(SHIP_TEMPLATES.length - 1)];
+
 export const ShipUtils = {
 	getAttackFeedback,
 	getRandomField,
+	getRandomShipsTemplate,
 }

@@ -5,4 +5,6 @@ export enum EIncomingMessageType {
 	CREATE_ROOM = 'create_room',
 	RANDOM_ATTACK = 'randomAttack',
 	REGISTRATION = 'reg',
+	SINGLE_PLAY = 'single_play',
+	BOT_CLOSE = 'bot_close',
 }
