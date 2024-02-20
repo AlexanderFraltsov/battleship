@@ -273,7 +273,6 @@ export class SocketServer {
 		});
 
 		bot.events.subscribe((message) => {
-			console.log(message.type)
 			if (message.type === EIncomingMessageType.BOT_CLOSE) {
 				bot.events.destroy();
 				this.clients = this.clients.filter((client) => client.id !== id);
@@ -340,9 +339,6 @@ export class SocketServer {
 	}
 
 	private sendUpdateWinners() {
-		console.log('clients: ', this.clients.map(({ id }) => id));
-		console.log('games: ', this.games);
-		console.log('rooms: ', this.rooms);
 		const registeredClients = this.clients.filter(client => client.user !== null);
 		for (const client of registeredClients) {
 			this.sendMessage(client, {
