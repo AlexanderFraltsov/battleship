@@ -2,36 +2,6 @@ import { getRandomInteger } from './get-random-integer.util';
 import { GAME_FIELD_SIDE, SHIP_TEMPLATES } from '../constants';
 import { EAttackResultStatus, TAttackResult, TShipPosition } from '../models';
 
-const getAttackFeedback = (x: number, y: number, shipPositions: TShipPosition[], field: boolean[][]): TAttackResult[] => {
-	if (field[x][y]) {
-		return [];
-	}
-
-	if (!isShipOnPosition(x, y, shipPositions)) {
-		return [{
-			status: EAttackResultStatus.MISS,
-			position: { x, y },
-		}];
-	}
-
-	const ship = getAttackedShip(x, y, shipPositions);
-	const positions = getAllPositionsForShip(ship);
-	const otherShipPositions = positions.filter(position => !(position.x === x && position.y === y));
-	if (otherShipPositions.length === 0 || otherShipPositions.every(({ x, y }) => field[x][y])) {
-		const around: TAttackResult[] = getAllPositionsArroundShip(ship)
-			.filter(({ x, y }) => !field[x][y])
-			.map(position => ({ status: EAttackResultStatus.MISS, position }));
-		const killed = positions.map(({ x, y }) => ({	status: EAttackResultStatus.KILLED, position: { x, y } }));
-		return [
-			...around,
-			...killed,
-		];
-	}
-
-	return [{ status: EAttackResultStatus.SHOT, position: { x, y } }];
-}
-
-
 const getAllPositionsForShip = ({ position, direction, length }: TShipPosition): { x: number, y: number }[] => {
 	if (length === 1) {
 		return [position]
@@ -46,6 +16,9 @@ const getAllPositionsForShip = ({ position, direction, length }: TShipPosition):
 
 const getPositionsForAllShip = (shipPositions: TShipPosition[]): { x: number, y: number }[] =>
   shipPositions.flatMap(ship => getAllPositionsForShip(ship));
+
+const isShipOnPosition = (x: number, y: number, shipPositions: TShipPosition[]) =>
+	getPositionsForAllShip(shipPositions).some(pos => pos.x === x && pos.y === y);
 
 const getAllPositionsArroundShip = (ship: TShipPosition) => {
 	const arroundPositions: { x: number, y: number }[] = [];
@@ -78,6 +51,38 @@ const getAllPositionsArroundShip = (ship: TShipPosition) => {
 	return arroundPositions.filter(({ x, y }) => x >= 0 && x < GAME_FIELD_SIDE && y >= 0 && y < GAME_FIELD_SIDE);
 }
 
+const getAttackedShip = (x: number, y: number, shipPositions: TShipPosition[]): TShipPosition =>
+	shipPositions.find((ship) => getAllPositionsForShip(ship).some(position => position.x === x && position.y === y));
+
+const getAttackFeedback = (x: number, y: number, shipPositions: TShipPosition[], field: boolean[][]): TAttackResult[] => {
+	if (field[x][y]) {
+		return [];
+	}
+
+	if (!isShipOnPosition(x, y, shipPositions)) {
+		return [{
+			status: EAttackResultStatus.MISS,
+			position: { x, y },
+		}];
+	}
+
+	const ship = getAttackedShip(x, y, shipPositions);
+	const positions = getAllPositionsForShip(ship);
+	const otherShipPositions = positions.filter(position => !(position.x === x && position.y === y));
+	if (otherShipPositions.length === 0 || otherShipPositions.every(({ x, y }) => field[x][y])) {
+		const around: TAttackResult[] = getAllPositionsArroundShip(ship)
+			.filter(({ x, y }) => !field[x][y])
+			.map(position => ({ status: EAttackResultStatus.MISS, position }));
+		const killed = positions.map(({ x, y }) => ({	status: EAttackResultStatus.KILLED, position: { x, y } }));
+		return [
+			...around,
+			...killed,
+		];
+	}
+
+	return [{ status: EAttackResultStatus.SHOT, position: { x, y } }];
+}
+
 const getAllFreeCells = (field: boolean[][]): { x: number, y: number }[] => {
 	const cells: { x: number, y: number }[] = [];
 	field.forEach((row, x) => row.forEach((cell, y) => {
@@ -88,18 +93,10 @@ const getAllFreeCells = (field: boolean[][]): { x: number, y: number }[] => {
 	return cells;
 }
 
-
-
 const getRandomField = (field: boolean[][]): { x: number, y: number } => {
 	const cells = getAllFreeCells(field);
 	return cells[getRandomInteger(cells.length - 1)];
 }
-
-const isShipOnPosition = (x: number, y: number, shipPositions: TShipPosition[]) =>
-	getPositionsForAllShip(shipPositions).some(pos => pos.x === x && pos.y === y);
-
-const getAttackedShip = (x: number, y: number, shipPositions: TShipPosition[]): TShipPosition =>
-	shipPositions.find((ship) => getAllPositionsForShip(ship).some(position => position.x === x && position.y === y));
 
 const getRandomShipsTemplate = () =>
 	SHIP_TEMPLATES[getRandomInteger(SHIP_TEMPLATES.length - 1)];

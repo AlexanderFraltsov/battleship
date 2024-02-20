@@ -14,6 +14,7 @@ import {
 	TUser,
 	TWinner,
 } from '../models';
+import { logger } from '../logger/logger';
 import { BOT_NAME } from '../constants';
 import { SeaBattleBot } from '../bot/sea-battle-bot';
 import { createGameField, generateId, ShipUtils } from '../utils';
@@ -39,7 +40,7 @@ export class SocketServer {
 		this.server.on('connection', this.handleConnect);
 
 		this.server.on('error', (error) => {
-			console.error(`Server error: ${error}`);
+			logger.error(`Server error: ${error}`);
 		});
 
 		process.on('exit', () => {
@@ -52,8 +53,9 @@ export class SocketServer {
 		this.clients.push(client);
 
 		socket.on('close', (code, reason) => {
-			console.log(`Client ID = ${client.id} | Closed with code ${code}, reason: ${reason.toString() ?? 'Reload Page'}`);
-			this.clients = this.clients.filter(({ id }) => id !== client.id)
+			const { data } = reason.toJSON();
+			logger.warn(`Client ID = ${client.id} | Closed with code ${code}, reason: ${data.length > 0 ? data : 'reload page!'}`);
+			this.clients = this.clients.filter(({ id }) => id !== client.id);
 		});
 		socket.on('error', (error) => this.handleError(client, error));
 		socket.on('message', (message) => this.handleMessage(client, message));
@@ -63,9 +65,8 @@ export class SocketServer {
 		try {
 			const response: TClientMessage = JSON.parse(message.toString());
 			const data = response.data.length > 0 ? JSON.parse(response.data) : response.data;
-			console.log(
-				`Client ID = ${client.id} | Incoming Message | Type: ${response.type} | Data: `,
-				JSON.stringify(data, null, 4),
+			logger.info(
+				`Client ID = ${client.id} | Incoming Message | Type: ${response.type} | Data: ${JSON.stringify(data, null, 4)}`,
 			);
 			this.action(response.type, data, client.id);
 		} catch (error) {
@@ -100,7 +101,7 @@ export class SocketServer {
 	}
 
 	private handleError = (client: TClient, error: Error) => {
-		console.error(`Client ID = ${client.id} | Socket error: ${error}`);
+		logger.error(`Client ID = ${client.id} | Socket error: ${error}`);
 	}
 
 	private registration = ({ name, password }: { name: string; password: string }, clientId: number): void => {
@@ -398,9 +399,8 @@ export class SocketServer {
 	private sendMessage(client: TClient, message: TServerMessage): void {
 		try {
 			if (client.socket.readyState === WebSocket.OPEN) {
-				console.log(
-					`Client ID = ${client.id} | Outcoming Message | Type: ${message.type} | Data: `,
-					JSON.stringify(message.data, null, 4),
+				logger.success(
+					`Client ID = ${client.id} | Outcoming Message | Type: ${message.type} | Data: ${JSON.stringify(message.data, null, 4)}`,
 				);
 				const responseMessage = this.prepareResponse(message);
 				client.socket.send(responseMessage);
